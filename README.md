@@ -24,6 +24,27 @@
 - **skill/SKILL.md**：Hermes Agent skill 集成文档，一键注册定时任务
 - **方法论总结**：可复用到其他桌面应用的签到自动化
 
+## 🔄 更新日志
+
+### 2026-10-13 · 迁移到 starxxy 版 signin.py
+
+**为什么要换**：2026 年 9 月起 WorkBuddy 桌面端升级，把凭据文件 `workbuddy-desktop.info` 里的 `accessToken` / `refreshToken` 从明文 JWT 改成了 **at-rest AES-256-GCM 加密 envelope**（`{suite:1, keyId, nonce, authTag, ciphertext}`）。原脚本直接把 envelope 当 Bearer 发出去，服务端一律 401 → 连续 20 天签到失败。
+
+**解决办法**：整体替换为 [starxxy/workbuddy-trae-auto-signin](https://github.com/starxxy/workbuddy-trae-auto-signin) 的单文件 `signin.py`（3117 行，零第三方依赖），它实现了：
+
+1. **AES-256-GCM 解密 envelope**：优先走纯 Python 内嵌实现，其次调 `WorkBuddy.exe` 自带的 Node crypto 当回落——key 从 desktop 客户端的 `electron_browser_workbuddy_storage` 里取（`ELECTRON_RUN_AS_NODE` 模式执行），不用用户自己管密钥
+2. **refreshToken 自动续期**：accessToken 过期时自动用 refreshToken 换新，不再要求用户每周手动重新登录桌面端
+3. **多平台签到**（本次只启用了 WorkBuddy 路径）：同一脚本里也有 Trae CN / Trae Code / Qoder 的逻辑，未来想用可以直接开
+4. **Electron UA 伪装**：避免被服务端识别为脚本
+
+**接口保持不变**：`silent` / `auto` / `status` / `claim` / `growth` 全部照旧，返回的 JSON 结构（`result`、`report`、`streak_days`、`total_credits`）一致，`runner.py` 和 Hermes cron 无需改动。
+
+**致谢**：starxxy 仓库没有显式 license 文件，README 声明"非官方个人技术实验工具，仅供学习研究"。本仓库仅把该脚本 vendoring 进来做本地个人自动化用途，**不会作为独立 MIT 作品分发该脚本的商业衍生版**。如果你也想用于自己的机器，建议直接去 starxxy 上游仓库运行最新版。
+
+### 历史版本
+
+- **2026-09-04**：初版，基于 88lin 的 signin.py + 自己的 runner.py / skill/
+
 ## ✨ 特性
 
 | 特性 | 说明 |
@@ -35,6 +56,8 @@
 | 🌐 跨平台 | Windows / macOS / Linux 自动探测凭据文件位置 |
 | ⏰ 多运行方式 | cron / Hermes skill / 手动调试 |
 | 🔒 无密钥 | 仓库不含任何密钥，只读取运行者本机登录凭据 |
+| 🛡️ at-rest 解密 | 支持 WorkBuddy 新版 AES-256-GCM 加密的凭据文件（2026-10 起） |
+| 🔄 token 自动续期 | refreshToken 失效前自动换 accessToken，告别每周手动重登 |
 
 ## 🚀 快速开始
 
@@ -160,7 +183,7 @@ hermes cron create \
 | 现象 | 处理 |
 |------|------|
 | `NO_AUTH / 未找到登录凭据` | 先登录 WorkBuddy 桌面端；或设置 `WORKBUDDY_AUTH_FILE` |
-| `NO_SESSION / HTTP 401\|403` | 登录态过期——重新登录桌面端，自动化自动恢复 |
+| `NO_SESSION / HTTP 401\\|403` | 新版 signin.py 会自动用 refreshToken 续期；若仍失败说明 refreshToken 也过期，需重新登录桌面端一次 |
 | `INACTIVE / 签到活动未开启` | 非签到季，属正常，无需处理 |
 | 调试原始返回 | `python examples/workbuddy/signin.py status` 或 `all` |
 
